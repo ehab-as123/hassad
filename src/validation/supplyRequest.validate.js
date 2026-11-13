@@ -1,10 +1,9 @@
-
 const { body } = require('express-validator');
 
 const createSupplyRequestValidation = [
     body('category')
-        .notEmpty()
-        .withMessage('Category is required'),
+        .isMongoId()
+        .withMessage('Invalid category ID'),
 
     body('name')
         .trim()
@@ -17,7 +16,7 @@ const createSupplyRequestValidation = [
         .withMessage('Description must be a string'),
 
     body('quantity')
-        .isFloat({ min: 1 })
+        .isFloat({ min: 0.01 })
         .withMessage('Quantity must be greater than 0'),
 
     body('unit')
@@ -25,8 +24,8 @@ const createSupplyRequestValidation = [
         .withMessage('Invalid unit'),
 
     body('region')
-        .notEmpty()
-        .withMessage('Region is required')
+        .isMongoId()
+        .withMessage('Invalid region ID')
 ];
 
 module.exports = {

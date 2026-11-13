@@ -1,5 +1,4 @@
-
-const JWT = require('jsonwebtoken');
+const { verifyToken } = require('../utils/jwtService');
 const User = require('../models/User');
 const AppError = require('../utils/appError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -13,7 +12,7 @@ const auth = asyncHandler(async (req, res, next) => {
         throw new AppError('Authentication required', 401);
     }
 
-    const decoded = JWT.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyToken(token);
 
     const user = await User.findById(decoded.id);
 

@@ -1,10 +1,8 @@
-const { models } = require("mongoose");
-
-class AppError extends Error{
-    constructor(message , statusCode = 500){
-        super(message);
-        this.statusCode = statusCode;
-    }
+class AppError extends Error {
+  constructor(message, statusCode = 500) {
+    super(message);
+    this.statusCode = statusCode;
+  }
 }
 
-module.exports = AppError ;
+module.exports = AppError;

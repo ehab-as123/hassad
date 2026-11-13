@@ -1,13 +1,12 @@
-
 const { body } = require('express-validator');
 
 const createOfferValidation = [
     body('supplyRequest')
-        .notEmpty()
-        .withMessage('Supply request is required'),
+        .isMongoId()
+        .withMessage('Invalid supply request ID'),
 
     body('quantity')
-        .isFloat({ min: 1 })
+        .isFloat({ min: 0.01 })
         .withMessage('Quantity must be greater than 0'),
 
     body('pricePerUnit')
@@ -18,11 +17,10 @@ const createOfferValidation = [
         .optional()
         .isString()
         .withMessage('Message must be a string'),
-        
+
     body('crop')
         .isMongoId()
         .withMessage('Invalid crop ID')
-
 ];
 
 module.exports = {

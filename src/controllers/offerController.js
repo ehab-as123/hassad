@@ -1,6 +1,6 @@
-
 const Offer = require('../models/Offer');
 const SupplyRequest = require('../models/SupplyRequest');
+const Crop = require('../models/Crop');
 const AppError = require('../utils/appError');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -19,9 +19,43 @@ const createOffer = asyncHandler(async (req, res) => {
         throw new AppError('You cannot offer on your own request', 400);
     }
 
+    const { crop: cropId, quantity, pricePerUnit, message } = req.body;
+
+    const crop = await Crop.findById(cropId);
+
+    if (!crop || crop.status !== 'active') {
+        throw new AppError('Crop not found or unavailable', 404);
+    }
+
+    if (crop.seller.toString() !== req.user._id.toString()) {
+        throw new AppError('You can only offer your own crops', 403);
+    }
+
+    if (crop.unit !== supplyRequest.unit) {
+        throw new AppError('Crop unit does not match the requested unit', 400);
+    }
+
+    if (Number(quantity) > crop.availableQuantity) {
+        throw new AppError('Offer quantity exceeds available crop quantity', 400);
+    }
+
+    const existingOffer = await Offer.findOne({
+        supplyRequest: supplyRequest._id,
+        seller: req.user._id,
+        status: { $in: ['pending', 'accepted'] }
+    });
+
+    if (existingOffer) {
+        throw new AppError('You already have an active offer on this request', 409);
+    }
+
     const offer = await Offer.create({
-        ...req.body,
-        seller: req.user._id
+        supplyRequest: supplyRequest._id,
+        seller: req.user._id,
+        crop: crop._id,
+        quantity,
+        pricePerUnit,
+        message
     });
 
     res.status(201).json({
@@ -79,9 +113,27 @@ const acceptOffer = asyncHandler(async (req, res) => {
         throw new AppError('Offer is not pending', 400);
     }
 
+    const alreadyAccepted = await Offer.exists({
+        supplyRequest: offer.supplyRequest,
+        status: 'accepted'
+    });
+
+    if (alreadyAccepted) {
+        throw new AppError('Another offer was already accepted for this request', 400);
+    }
+
     offer.status = 'accepted';
 
     await offer.save();
+
+    await Offer.updateMany(
+        {
+            supplyRequest: offer.supplyRequest,
+            _id: { $ne: offer._id },
+            status: 'pending'
+        },
+        { $set: { status: 'rejected' } }
+    );
 
     res.status(200).json({
         status: 'success',

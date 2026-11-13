@@ -1,4 +1,3 @@
-
 const express = require('express');
 
 const {
@@ -15,16 +14,17 @@ const {
 const auth = require('../middlewares/auth');
 const validation = require('../middlewares/validation');
 const id = require('../middlewares/id');
+const role = require('../middlewares/role');
 
 
 const router = express.Router();
 
-router.post('/', auth, createOfferValidation, validation, createOffer);
+router.post('/', auth, role('farmer'), createOfferValidation, validation, createOffer);
 
-router.get('/request/:id', auth, id, getOffersByRequest);
+router.get('/request/:id', auth, id(), getOffersByRequest);
 
-router.patch('/:id/accept', auth, id, acceptOffer);
+router.patch('/:id/accept', auth, id(), acceptOffer);
 
-router.patch('/:id/reject', auth, id, rejectOffer);
+router.patch('/:id/reject', auth, id(), rejectOffer);
 
 module.exports = router;

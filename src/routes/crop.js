@@ -1,4 +1,3 @@
-
 const express = require('express');
 
 const {
@@ -7,6 +6,7 @@ const {
 } = require('../controllers/cropController');
 
 const auth = require('../middlewares/auth');
+const role = require('../middlewares/role');
 const validation = require('../middlewares/validation');
 const { createCropValidation } = require('../validation/crop.validate');
 
@@ -17,6 +17,7 @@ router.get('/', getCrops);
 router.post(
     '/',
     auth,
+    role('farmer'),
     createCropValidation,
     validation,
     createCrop

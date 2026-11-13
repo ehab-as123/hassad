@@ -1,4 +1,3 @@
-
 const SupplyRequest = require('../models/SupplyRequest');
 const Category = require('../models/Category');
 const Region = require('../models/Region');
@@ -24,9 +23,16 @@ const createSupplyRequest = asyncHandler(async (req, res) => {
         throw new AppError('Region not found', 404);
     }
 
+    const { name, description, quantity, unit } = req.body;
+
     const supplyRequest = await SupplyRequest.create({
-        ...req.body,
-        buyer: req.user._id
+        buyer: req.user._id,
+        category: category._id,
+        region: region._id,
+        name,
+        description,
+        quantity,
+        unit
     });
 
     res.status(201).json({

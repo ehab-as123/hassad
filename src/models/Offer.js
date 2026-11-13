@@ -1,4 +1,3 @@
-
 const mongoose = require('mongoose');
 
 const offerSchema = new mongoose.Schema({
@@ -13,7 +12,7 @@ const offerSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
-    
+
     crop: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Crop',
@@ -23,7 +22,7 @@ const offerSchema = new mongoose.Schema({
     quantity: {
         type: Number,
         required: true,
-        min: 1
+        min: 0.01
     },
 
     pricePerUnit: {

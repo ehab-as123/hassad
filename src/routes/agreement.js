@@ -1,4 +1,3 @@
-
 const express = require('express');
 
 const {
@@ -24,12 +23,12 @@ router.post('/', createAgreementValidation, validation, createAgreement);
 
 router.get('/my', getMyAgreements);
 
-router.patch('/:id/confirm', id, confirmAgreement);
+router.patch('/:id/confirm', id(), confirmAgreement);
 
-router.post('/from-offer/:offerId', id, createAgreementFromOffer);
+router.post('/from-offer/:offerId', id('offerId'), createAgreementFromOffer);
 
-router.patch('/:id/cancel', id, cancelAgreement);
+router.patch('/:id/cancel', id(), cancelAgreement);
 
-router.patch('/:id/complete', id, completeAgreement);
+router.patch('/:id/complete', id(), completeAgreement);
 
 module.exports = router;

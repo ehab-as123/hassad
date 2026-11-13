@@ -1,4 +1,3 @@
-
 const mongoose = require('mongoose');
 
 const agreementSchema = new mongoose.Schema({
@@ -41,7 +40,7 @@ const agreementSchema = new mongoose.Schema({
     quantity: {
         type: Number,
         required: true,
-        min: 1
+        min: 0.01
     },
 
     unit: {
@@ -85,20 +84,14 @@ const agreementSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
-agreementSchema.pre('validate', function (next) {
-    if (this.sourceType === 'directCrop') {
-        if (this.supplyRequest || this.offer) {
-            return next(new Error('Direct crop agreement cannot have a request or offer'));
-        }
+agreementSchema.pre('validate', function () {
+    if (this.sourceType === 'directCrop' && (this.supplyRequest || this.offer)) {
+        throw new Error('Direct crop agreement cannot have a request or offer');
     }
 
-    if (this.sourceType === 'requestOffer') {
-        if (!this.supplyRequest || !this.offer) {
-            return next(new Error('Request and offer are required'));
-        }
+    if (this.sourceType === 'requestOffer' && (!this.supplyRequest || !this.offer)) {
+        throw new Error('Request and offer are required');
     }
-
-    next();
 });
 
 module.exports = mongoose.model('Agreement', agreementSchema);
