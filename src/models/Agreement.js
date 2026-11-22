@@ -94,4 +94,13 @@ agreementSchema.pre('validate', function () {
     }
 });
 
+// Only one pending agreement per offer (enforced by the database).
+agreementSchema.index(
+    { offer: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { offer: { $type: 'objectId' }, status: 'pendingConfirmation' }
+    }
+);
+
 module.exports = mongoose.model('Agreement', agreementSchema);

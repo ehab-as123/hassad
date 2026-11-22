@@ -1,7 +1,5 @@
 const { body } = require('express-validator');
 
-// Direct purchase from a crop listing. Price is taken from the crop on the
-// server, and agreements from offers go through POST /from-offer/:offerId.
 const createAgreementValidation = [
     body('crop')
         .isMongoId()

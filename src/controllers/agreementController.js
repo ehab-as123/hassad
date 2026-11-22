@@ -5,10 +5,58 @@ const Offer = require('../models/Offer');
 const AppError = require('../utils/appError');
 const asyncHandler = require('../utils/asyncHandler');
 
+const { reserveStock, releaseStock, sellReservedStock } = require('../utils/stock');
+
 const isParty = (agreement, userId) =>
     agreement.buyer.toString() === userId || agreement.seller.toString() === userId;
 
-// Direct purchase from a crop listing. Price comes from the crop, never from the client.
+const cancelAgreementById = async (agreementId) => {
+    const previous = await Agreement.findOneAndUpdate(
+        { _id: agreementId, status: { $nin: ['completed', 'cancelled'] } },
+        { $set: { status: 'cancelled' } },
+        { new: false }
+    );
+
+    if (!previous) {
+        return null;
+    }
+
+    if (previous.stockReserved) {
+        const crop = await releaseStock(previous.crop, previous.quantity);
+
+        if (!crop) {
+            await Agreement.updateOne(
+                { _id: agreementId, status: 'cancelled' },
+                { $set: { status: previous.status } }
+            );
+            throw new AppError('Could not release reserved quantity', 400);
+        }
+
+        await Agreement.updateOne(
+            { _id: agreementId },
+            { $set: { stockReserved: false } }
+        );
+    }
+
+    if (previous.offer) {
+        const offer = await Offer.findOneAndUpdate(
+            { _id: previous.offer, status: 'accepted' },
+            { $set: { status: 'pending' } },
+            { new: true }
+        );
+
+        if (!offer) {
+            const currentOffer = await Offer.findById(previous.offer);
+            if (!currentOffer || currentOffer.status === 'accepted') {
+                throw new AppError('Agreement cancelled, but its offer could not be released', 500);
+            }
+        }
+    }
+
+    return previous;
+};
+
+
 const createAgreement = asyncHandler(async (req, res) => {
     const { crop: cropId, quantity, unit } = req.body;
 
@@ -67,9 +115,6 @@ const getMyAgreements = asyncHandler(async (req, res) => {
     });
 });
 
-
-// Each side confirms atomically. Stock is reserved when the second side confirms;
-// if reservation fails, that confirmation is rolled back so the agreement is not stuck.
 const confirmAgreement = asyncHandler(async (req, res) => {
     const agreement = await Agreement.findById(req.params.id);
 
@@ -91,58 +136,79 @@ const confirmAgreement = asyncHandler(async (req, res) => {
         ? 'buyerConfirmed'
         : 'sellerConfirmed';
 
-    let updated = await Agreement.findOneAndUpdate(
+    const updated = await Agreement.findOneAndUpdate(
         { _id: agreement._id, status: 'pendingConfirmation', [field]: false },
         { $set: { [field]: true } },
         { new: true }
     );
 
     if (!updated) {
-        throw new AppError('You already confirmed this agreement', 400);
+        throw new AppError('You already confirmed this agreement or it is no longer pending', 400);
     }
 
-    if (updated.buyerConfirmed && updated.sellerConfirmed) {
-        const crop = await Crop.findOneAndUpdate(
-            {
-                _id: updated.crop,
-                status: 'active',
-                availableQuantity: { $gte: updated.quantity }
-            },
-            {
-                $inc: {
-                    availableQuantity: -updated.quantity,
-                    reservedQuantity: updated.quantity
-                }
-            },
-            { new: true }
-        );
+    if (!(updated.buyerConfirmed && updated.sellerConfirmed)) {
+        return res.status(200).json({
+            status: 'success',
+            message: 'Your confirmation has been recorded',
+            data: updated
+        });
+    }
 
-        if (!crop) {
-            await Agreement.updateOne(
-                { _id: updated._id },
-                { $set: { [field]: false } }
-            );
-            throw new AppError('Not enough available crop quantity', 400);
+    const claimed = await Agreement.findOneAndUpdate(
+        {
+            _id: agreement._id,
+            status: 'pendingConfirmation',
+            buyerConfirmed: true,
+            sellerConfirmed: true,
+            stockReserved: false
+        },
+        { $set: { status: 'confirmed' } },
+        { new: true }
+    );
+
+    if (!claimed) {
+        const current = await Agreement.findById(agreement._id);
+
+        if (!current || current.status === 'cancelled') {
+            throw new AppError('Agreement was cancelled', 409);
         }
 
-        updated = await Agreement.findByIdAndUpdate(
-            updated._id,
-            { $set: { stockReserved: true, status: 'confirmed' } },
-            { new: true }
+        return res.status(200).json({
+            status: 'success',
+            message: 'Your confirmation has been recorded',
+            data: current
+        });
+    }
+
+    const crop = await reserveStock(claimed.crop, claimed.quantity);
+
+    if (!crop) {
+        await Agreement.findOneAndUpdate(
+            { _id: agreement._id, status: 'confirmed', stockReserved: false },
+            { $set: { status: 'pendingConfirmation', [field]: false } }
         );
+
+        throw new AppError('Not enough available crop quantity', 400);
+    }
+
+    const reserved = await Agreement.findOneAndUpdate(
+        { _id: agreement._id, status: 'confirmed', stockReserved: false },
+        { $set: { stockReserved: true } },
+        { new: true }
+    );
+
+    if (!reserved) {
+        await releaseStock(claimed.crop, claimed.quantity);
+        throw new AppError('Agreement was cancelled', 409);
     }
 
     res.status(200).json({
         status: 'success',
-        message: updated.stockReserved
-            ? 'Agreement confirmed and quantity reserved'
-            : 'Your confirmation has been recorded',
-        data: updated
+        message: 'Agreement confirmed and quantity reserved',
+        data: reserved
     });
 });
 
-
-// Agreement from an accepted offer. Quantity, price and unit come from the offer and crop.
 const createAgreementFromOffer = asyncHandler(async (req, res) => {
     const offer = await Offer.findById(req.params.offerId);
 
@@ -191,20 +257,37 @@ const createAgreementFromOffer = asyncHandler(async (req, res) => {
         throw new AppError('Offer quantity exceeds available crop quantity', 400);
     }
 
-    const agreement = await Agreement.create({
-        sourceType: 'requestOffer',
-        buyer: supplyRequest.buyer,
-        seller: offer.seller,
-        crop: crop._id,
-        supplyRequest: supplyRequest._id,
+    let agreement;
+
+    try {
+        agreement = await Agreement.create({
+            sourceType: 'requestOffer',
+            buyer: supplyRequest.buyer,
+            seller: offer.seller,
+            crop: crop._id,
+            supplyRequest: supplyRequest._id,
+            offer: offer._id,
+            quantity: offer.quantity,
+            unit: crop.unit,
+            pricePerUnit: offer.pricePerUnit
+        });
+    } catch (error) {
+        if (error.code === 11000) {
+            throw new AppError('Agreement already exists for this offer', 409);
+        }
+        throw error;
+    }
+
+    const others = await Agreement.countDocuments({
         offer: offer._id,
-        quantity: offer.quantity,
-        unit: crop.unit,
-        pricePerUnit: offer.pricePerUnit
+        status: { $ne: 'cancelled' },
+        _id: { $ne: agreement._id }
     });
 
-    supplyRequest.status = 'closed';
-    await supplyRequest.save();
+    if (others > 0) {
+        await cancelAgreementById(agreement._id);
+        throw new AppError('Agreement already exists for this offer', 409);
+    }
 
     res.status(201).json({
         status: 'success',
@@ -225,53 +308,22 @@ const cancelAgreement = asyncHandler(async (req, res) => {
         throw new AppError('You are not part of this agreement', 403);
     }
 
-    if (['completed', 'cancelled'].includes(agreement.status)) {
+    const previous = await cancelAgreementById(agreement._id);
+
+    if (!previous) {
         throw new AppError('Agreement cannot be cancelled', 400);
     }
 
-    if (agreement.stockReserved) {
-        const crop = await Crop.findOneAndUpdate(
-            {
-                _id: agreement.crop,
-                reservedQuantity: { $gte: agreement.quantity }
-            },
-            {
-                $inc: {
-                    availableQuantity: agreement.quantity,
-                    reservedQuantity: -agreement.quantity
-                }
-            },
-            { new: true }
-        );
-
-        if (!crop) {
-            throw new AppError('Could not release reserved quantity', 400);
-        }
-
-        agreement.stockReserved = false;
-    }
-
-    agreement.status = 'cancelled';
-
-    await agreement.save();
-
-    // Re-open the request so the buyer can create a new agreement from the accepted offer.
-    if (agreement.supplyRequest) {
-        await SupplyRequest.updateOne(
-            { _id: agreement.supplyRequest, status: 'closed' },
-            { $set: { status: 'open' } }
-        );
-    }
+    const current = await Agreement.findById(agreement._id);
 
     res.status(200).json({
         status: 'success',
         message: 'Agreement cancelled successfully',
-        data: agreement
+        data: current
     });
 });
 
 
-// Only the buyer completes the agreement (confirms receipt).
 const completeAgreement = asyncHandler(async (req, res) => {
     const agreement = await Agreement.findById(req.params.id);
 
@@ -289,41 +341,40 @@ const completeAgreement = asyncHandler(async (req, res) => {
         throw new AppError('Only the buyer can complete the agreement', 403);
     }
 
-    if (agreement.status !== 'confirmed' && agreement.status !== 'inProgress') {
+    const previous = await Agreement.findOneAndUpdate(
+        {
+            _id: agreement._id,
+            status: { $in: ['confirmed', 'inProgress'] },
+            stockReserved: true
+        },
+        { $set: { status: 'completed' } },
+        { new: false }
+    );
+
+    if (!previous) {
         throw new AppError('Agreement is not ready for completion', 400);
     }
 
-    if (!agreement.stockReserved) {
-        throw new AppError('Agreement has no reserved stock', 400);
-    }
-
-    const crop = await Crop.findOneAndUpdate(
-        {
-            _id: agreement.crop,
-            reservedQuantity: { $gte: agreement.quantity }
-        },
-        {
-            $inc: {
-                reservedQuantity: -agreement.quantity,
-                soldQuantity: agreement.quantity
-            }
-        },
-        { new: true }
-    );
+    const crop = await sellReservedStock(previous.crop, previous.quantity);
 
     if (!crop) {
+        await Agreement.updateOne(
+            { _id: agreement._id, status: 'completed' },
+            { $set: { status: previous.status } }
+        );
         throw new AppError('Could not complete stock update', 400);
     }
 
-    agreement.status = 'completed';
-    agreement.stockReserved = false;
-
-    await agreement.save();
+    const completed = await Agreement.findOneAndUpdate(
+        { _id: agreement._id },
+        { $set: { stockReserved: false } },
+        { new: true }
+    );
 
     res.status(200).json({
         status: 'success',
         message: 'Agreement completed successfully',
-        data: agreement
+        data: completed
     });
 });
 

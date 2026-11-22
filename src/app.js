@@ -5,6 +5,7 @@ const morgan = require ("morgan");
 const connectDb = require ("./utils/connectDb");
 const errorMiddleware =require("./middlewares/errorMiddleware");
 const notFound =require ("./middlewares/notFound");
+const { reconcileStock } = require("./utils/stock");
 const app = express();
 
 app.use(express.json());
@@ -30,6 +31,7 @@ app.use(errorMiddleware);
 const start = async () => {
   try {
     await connectDb();
+    await reconcileStock();
 
     const port = process.env.PORT || 27000;
 

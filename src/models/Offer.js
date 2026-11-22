@@ -44,4 +44,20 @@ const offerSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
+// Only one accepted offer per supply request.
+offerSchema.index(
+    { supplyRequest: 1 },
+    { unique: true, partialFilterExpression: { status: 'accepted' } }
+);
+
+// A seller may have only one active offer (pending or accepted) per request.
+offerSchema.index(
+    { supplyRequest: 1, seller: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { status: { $in: ['pending', 'accepted'] } },
+        name: 'one_active_offer_per_seller_request'
+    }
+);
+
 module.exports = mongoose.model('Offer', offerSchema);
